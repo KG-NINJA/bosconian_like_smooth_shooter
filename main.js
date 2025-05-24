@@ -200,10 +200,23 @@ function update() {
   // 偵察機巡回＆発見判定＆破壊判定
   for(const scout of scouts) {
     scout.angle += scout.speed;
-    scout.x = MAP_W/2 + Math.cos(scout.angle) * scout.r;
-    scout.y = MAP_H/2 + Math.sin(scout.angle) * scout.r;
+
+    // Radius dynamics
+    scout.radiusChangeTimer--;
+    if (scout.radiusChangeTimer <= 0) {
+      scout.targetRadius = 350 + Math.random() * 300; // Random radius between 350 and 650
+      scout.radiusChangeTimer = 180 + Math.random() * 120; // Random duration 3-5 seconds
+    }
+    scout.r += (scout.targetRadius - scout.r) * 0.02; // Smoothly adjust radius
+
+    // Path oscillation
+    const currentR = scout.r + Math.sin(scout.angle * 3) * 30;
+
+    scout.x = MAP_W/2 + Math.cos(scout.angle) * currentR;
+    scout.y = MAP_H/2 + Math.sin(scout.angle) * currentR;
     // 発見判定
     if(!alertMode && Math.hypot(player.x-scout.x, player.y-scout.y) < 60) {
+      playAlertSound(); // Call the voice alert
       alertMode = true;
       alertTimer = 1800; // 30秒間
     }
@@ -589,10 +602,24 @@ const homingMissiles = []; // {x, y, vx, vy, speed, alive}
 
 // 偵察機
 const scouts = [
-  {angle: 0, r: 500, speed: 0.012, found: false, x: 0, y: 0},
+  {angle: 0, r: 500, speed: 0.012, found: false, x: 0, y: 0, targetRadius: 500, radiusChangeTimer: 0},
 ];
 let alertMode = false;
 let alertTimer = 0;
+
+// Voice alert function
+function playAlertSound() {
+  if ('speechSynthesis' in window) {
+    const utterance = new SpeechSynthesisUtterance("アラート");
+    utterance.lang = 'ja-JP'; // For Japanese
+    // Optional: You can set other properties like pitch, rate
+    // utterance.pitch = 1.5;
+    // utterance.rate = 1.2;
+    window.speechSynthesis.speak(utterance);
+  } else {
+    console.log("Web Speech API not supported in this browser.");
+  }
+}
 
 function startStage() {
   // 難易度アップ: 基地増加、敵増加、速度アップ
