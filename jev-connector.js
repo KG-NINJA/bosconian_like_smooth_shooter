@@ -4,7 +4,7 @@
   const enabled = new URLSearchParams(window.location.search).get('jev') === '1';
   if (!enabled) return;
 
-  const VERSION = '1.1.2';
+  const VERSION = '1.2.0';
   const allowBackground = new URLSearchParams(window.location.search).get('jev_background') === '1';
   const OBSERVATION_INTERVAL_MS = 100;
   const MIN_DURATION_MS = 50;
