@@ -13,6 +13,7 @@
   const FIRE_ON_MS = 70;
   const MOVEMENTS = Object.freeze({
     stay: [],
+    auto: null,
     up: ['ArrowUp'],
     down: ['ArrowDown'],
     left: ['ArrowLeft'],
@@ -205,6 +206,28 @@
     };
   }
 
+  function autoKeys() {
+    const target = lastObservation && lastObservation.nearest_target;
+    if (!target) return [];
+    let dx = target.relative.dx;
+    let dy = target.relative.dy;
+    const threat = lastObservation.threats && lastObservation.threats[0];
+    if (threat && threat.relative.distance < 180) {
+      dx = -threat.relative.dx;
+      dy = -threat.relative.dy;
+    } else if (target.relative.distance < 150) {
+      const tangentX = -dy;
+      dy = dx;
+      dx = tangentX;
+    }
+    const keysFor = [];
+    if (dx > 25) keysFor.push('ArrowRight');
+    if (dx < -25) keysFor.push('ArrowLeft');
+    if (dy > 25) keysFor.push('ArrowDown');
+    if (dy < -25) keysFor.push('ArrowUp');
+    return keysFor;
+  }
+
   function applyActiveAction(now) {
     releaseControlKeys();
     if (!activeAction) return;
@@ -222,7 +245,8 @@
       return;
     }
     if (elapsed < activeAction.move_ms) {
-      for (const key of MOVEMENTS[activeAction.movement]) keys[key] = true;
+      const movementKeys = activeAction.movement === 'auto' ? autoKeys() : MOVEMENTS[activeAction.movement];
+      for (const key of movementKeys) keys[key] = true;
     }
     if (activeAction.fire && elapsed % FIRE_PERIOD_MS < FIRE_ON_MS) {
       keys[' '] = true;
