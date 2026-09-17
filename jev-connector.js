@@ -8,7 +8,7 @@
   const allowBackground = new URLSearchParams(window.location.search).get('jev_background') === '1';
   const OBSERVATION_INTERVAL_MS = 100;
   const MIN_DURATION_MS = 50;
-  const MAX_DURATION_MS = 3000;
+  const MAX_DURATION_MS = allowBackground ? 60000 : 3000;
   const FIRE_PERIOD_MS = 160;
   const FIRE_ON_MS = 70;
   const MOVEMENTS = Object.freeze({
