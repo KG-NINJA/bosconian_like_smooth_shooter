@@ -4,7 +4,7 @@
   const enabled = new URLSearchParams(window.location.search).get('jev') === '1';
   if (!enabled) return;
 
-  const VERSION = '1.0.0';
+  const VERSION = '1.1.0';
   const OBSERVATION_INTERVAL_MS = 100;
   const MIN_DURATION_MS = 50;
   const MAX_DURATION_MS = 3000;
@@ -31,8 +31,55 @@
   let observationField = null;
   let actionField = null;
   let statusField = null;
+  let logCountField = null;
+  let logSessionId = null;
+  let logEventCount = 0;
+  let lastLoggedState = null;
+  let lastOutcomeSignature = null;
   const objectIds = new WeakMap();
   let nextObjectId = 1;
+
+  function logEvent(kind, details) {
+    if (!logSessionId || !window.KGAgentExecutionLog) return null;
+    const event = window.KGAgentExecutionLog.record(logSessionId, {
+      kind,
+      actor: details && details.actor,
+      task_phase: details && details.task_phase,
+      correlation: details && details.correlation,
+      data: details && details.data,
+      evidence: details && details.evidence,
+      outcome: details && details.outcome
+    });
+    logEventCount++;
+    if (logCountField) logCountField.textContent = 'Log: ' + logEventCount + ' events';
+    return event;
+  }
+
+  function startExecutionLog() {
+    if (!window.KGAgentExecutionLog) return;
+    const session = window.KGAgentExecutionLog.createSession({
+      task: {
+        domain: 'game',
+        name: 'bosconian-stage-clear',
+        objective: 'destroy every base while keeping the player alive',
+        stage_at_start: stage
+      },
+      source: {
+        application: 'bosconian_like_smooth_shooter',
+        connector: 'JevBosconianConnector',
+        connector_version: VERSION,
+        url: window.location.href
+      },
+      labels: ['jev', 'browser-agent', 'reusable-execution-data']
+    });
+    logSessionId = session.session_id;
+    logEvent('session_started', {
+      actor: 'connector',
+      task_phase: 'initialization',
+      data: { stage, bases_remaining: bases.filter(base => base.alive).length },
+      evidence: { query_enabled: true, persistence: 'browser_local_only' }
+    });
+  }
 
   function finiteNumber(value, name) {
     const number = Number(value);
@@ -90,6 +137,20 @@
       statusField.textContent = reason ? '停止: ' + reason : '停止';
       statusField.dataset.state = 'stopped';
     }
+    if (stopped) {
+      logEvent('action_result', {
+        actor: 'connector',
+        task_phase: 'control',
+        correlation: { action_id: stopped.action_id, request_id: stopped.request_id },
+        data: {
+          movement: stopped.movement,
+          fire: stopped.fire,
+          planned_duration_ms: stopped.duration_ms,
+          elapsed_ms: Math.max(0, Math.round(performance.now() - stopped.started_at_ms))
+        },
+        outcome: { status: reason === 'expired' ? 'completed' : 'stopped', reason: reason || 'requested' }
+      });
+    }
     return stopped ? {
       action_id: stopped.action_id,
       stopped: true,
@@ -98,7 +159,18 @@
   }
 
   function act(input) {
-    const action = normalizeAction(input);
+    let action;
+    try {
+      action = normalizeAction(input);
+    } catch (error) {
+      logEvent('error', {
+        actor: 'connector',
+        task_phase: 'validation',
+        data: { input_type: typeof input },
+        outcome: { code: 'INVALID_ACTION', message: error.message }
+      });
+      throw error;
+    }
     stop('replaced');
     const now = performance.now();
     activeAction = {
@@ -111,6 +183,18 @@
       statusField.textContent = '実行中 #' + activeAction.action_id;
       statusField.dataset.state = 'active';
     }
+    logEvent('action', {
+      actor: 'jev',
+      task_phase: 'control',
+      correlation: { action_id: activeAction.action_id, request_id: activeAction.request_id, observation_seq: sequence },
+      data: action,
+      evidence: lastObservation ? {
+        mode: lastObservation.status.mode,
+        stage: lastObservation.status.stage,
+        bases_remaining: lastObservation.status.bases_remaining,
+        nearest_target_id: lastObservation.nearest_target && lastObservation.nearest_target.id
+      } : {}
+    });
     return {
       accepted: true,
       action_id: activeAction.action_id,
@@ -288,6 +372,12 @@
       targets,
       threats: threats.slice(0, 24),
       input: action,
+      execution_log: {
+        schema: 'kg-agent-execution-event/1',
+        session_id: logSessionId,
+        event_count: logEventCount,
+        storage: 'browser_local_only'
+      },
       controls: {
         movement: Object.keys(MOVEMENTS),
         duration_ms: { min: MIN_DURATION_MS, max: MAX_DURATION_MS },
@@ -300,6 +390,51 @@
   function publishObservation() {
     lastObservation = observe();
     if (observationField) observationField.value = JSON.stringify(lastObservation, null, 2);
+    const state = {
+      mode: lastObservation.status.mode,
+      stage: lastObservation.status.stage,
+      bases_remaining: lastObservation.status.bases_remaining,
+      alert: lastObservation.status.alert,
+      player_alive: lastObservation.player.alive
+    };
+    const stateSignature = JSON.stringify(state);
+    if (stateSignature !== lastLoggedState) {
+      logEvent('state_transition', {
+        actor: 'environment',
+        task_phase: 'play',
+        data: { from: lastLoggedState ? JSON.parse(lastLoggedState) : null, to: state },
+        evidence: { observation_seq: lastObservation.seq }
+      });
+      lastLoggedState = stateSignature;
+    }
+    if (lastObservation.seq % 10 === 0) {
+      logEvent('observation_sample', {
+        actor: 'environment',
+        task_phase: 'play',
+        correlation: { observation_seq: lastObservation.seq },
+        data: {
+          status: lastObservation.status,
+          player: lastObservation.player,
+          nearest_target: lastObservation.nearest_target,
+          nearest_threats: lastObservation.threats.slice(0, 5),
+          active_input: lastObservation.input
+        },
+        evidence: { sampling_hz: 1, source_hz: 10 }
+      });
+    }
+    if (state.mode === 'stage_clear' || state.mode === 'game_over') {
+      const outcomeSignature = state.mode + ':' + state.stage;
+      if (outcomeSignature !== lastOutcomeSignature) {
+        logEvent('outcome', {
+          actor: 'environment',
+          task_phase: 'result',
+          data: state,
+          evidence: { observation_seq: lastObservation.seq },
+          outcome: { status: state.mode === 'stage_clear' ? 'success' : 'failure' }
+        });
+        lastOutcomeSignature = outcomeSignature;
+      }
+    }
     window.dispatchEvent(new CustomEvent('jev:observation', { detail: lastObservation }));
   }
 
@@ -320,6 +455,7 @@
       #jev-connector-panel .jev-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
       #jev-connector-panel button { padding: 7px 12px; color: #031015; background: #65e6f2; border: 0; border-radius: 4px; cursor: pointer; }
       #jev-connector-panel button[data-kind="stop"] { background: #ffb36b; }
+      #jev-connector-log-count { margin-left: 8px; color: #9bd7df; }
       #jev-connector-status[data-state="error"] { color: #ff7b7b; }
       #jev-connector-status[data-state="active"] { color: #7dff9a; }
     `;
@@ -330,7 +466,7 @@
     panel.setAttribute('aria-label', 'Jev connector');
     panel.innerHTML = `
       <h2>Jev Connector v${VERSION}</h2>
-      <div id="jev-connector-status" role="status">待機中</div>
+      <div><span id="jev-connector-status" role="status">待機中</span><span id="jev-connector-log-count">Log: 0 events</span></div>
       <details open>
         <summary>Action JSON</summary>
         <textarea id="jev-action-json" spellcheck="false" aria-label="Jev action JSON">{"movement":"up_right","fire":true,"duration_ms":300,"move_ms":300}</textarea>
@@ -338,6 +474,8 @@
           <button type="button" id="jev-apply-action">Apply action</button>
           <button type="button" id="jev-stop-action" data-kind="stop">Stop</button>
           <button type="button" id="jev-copy-observation">Copy observation</button>
+          <button type="button" id="jev-copy-log">Copy log JSONL</button>
+          <button type="button" id="jev-download-log">Download log JSONL</button>
         </div>
       </details>
       <details open>
@@ -349,6 +487,8 @@
     observationField = panel.querySelector('#jev-observation-json');
     actionField = panel.querySelector('#jev-action-json');
     statusField = panel.querySelector('#jev-connector-status');
+    logCountField = panel.querySelector('#jev-connector-log-count');
+    logCountField.textContent = 'Log: ' + logEventCount + ' events';
 
     panel.querySelector('#jev-apply-action').addEventListener('click', () => {
       try {
@@ -367,6 +507,24 @@
         setPanelStatus('コピー失敗: ' + error.message, 'error');
       }
     });
+    panel.querySelector('#jev-copy-log').addEventListener('click', async () => {
+      try {
+        if (!logSessionId) throw new Error('log session unavailable');
+        await navigator.clipboard.writeText(window.KGAgentExecutionLog.toJSONL(logSessionId));
+        setPanelStatus('ログJSONLをコピーしました', 'info');
+      } catch (error) {
+        setPanelStatus('ログコピー失敗: ' + error.message, 'error');
+      }
+    });
+    panel.querySelector('#jev-download-log').addEventListener('click', () => {
+      try {
+        if (!logSessionId) throw new Error('log session unavailable');
+        window.KGAgentExecutionLog.download(logSessionId, 'jev-bosconian-' + logSessionId.split(':').pop() + '.jsonl');
+        setPanelStatus('ログJSONLを保存しました', 'info');
+      } catch (error) {
+        setPanelStatus('ログ保存失敗: ' + error.message, 'error');
+      }
+    });
   }
 
   window.addEventListener('message', event => {
@@ -382,7 +540,22 @@
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) stop('document_hidden');
   });
+  window.addEventListener('pagehide', () => {
+    if (logSessionId && window.KGAgentExecutionLog) {
+      logEvent('session_ended', {
+        actor: 'connector',
+        task_phase: 'shutdown',
+        data: lastObservation ? lastObservation.status : {},
+        outcome: { reason: 'pagehide' }
+      });
+      window.KGAgentExecutionLog.endSession(logSessionId, {
+        reason: 'pagehide',
+        final_status: lastObservation ? lastObservation.status : null
+      });
+    }
+  });
 
+  startExecutionLog();
   mountPanel();
   publishObservation();
   window.setInterval(publishObservation, OBSERVATION_INTERVAL_MS);
@@ -398,9 +571,18 @@
     observe: () => lastObservation || observe(),
     act,
     stop: () => stop('api'),
+    getLog: () => logSessionId && window.KGAgentExecutionLog
+      ? window.KGAgentExecutionLog.getSession(logSessionId)
+      : null,
+    getLogJSONL: () => logSessionId && window.KGAgentExecutionLog
+      ? window.KGAgentExecutionLog.toJSONL(logSessionId)
+      : '',
+    logSessionId: () => logSessionId,
     schema: Object.freeze({
       action: 'kg-ninja/jev-bosconian-action/1',
-      observation: 'kg-ninja/jev-bosconian-observation/1'
+      observation: 'kg-ninja/jev-bosconian-observation/1',
+      execution_session: 'kg-agent-execution-session/1',
+      execution_event: 'kg-agent-execution-event/1'
     })
   });
 })();

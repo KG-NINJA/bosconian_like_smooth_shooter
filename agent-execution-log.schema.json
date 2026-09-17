@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kg-ninja.github.io/bosconian_like_smooth_shooter/agent-execution-log.schema.json",
+  "title": "KG Agent Execution Log",
+  "oneOf": [
+    { "$ref": "#/$defs/session" },
+    { "$ref": "#/$defs/event" }
+  ],
+  "$defs": {
+    "session": {
+      "type": "object",
+      "required": ["schema", "session_id", "started_at", "task", "source"],
+      "properties": {
+        "schema": { "const": "kg-agent-execution-session/1" },
+        "session_id": { "type": "string", "minLength": 1 },
+        "started_at": { "type": "string", "format": "date-time" },
+        "ended_at": { "type": ["string", "null"], "format": "date-time" },
+        "task": { "type": "object" },
+        "source": { "type": "object" },
+        "policy": { "type": "object" },
+        "labels": { "type": "array" },
+        "final_outcome": { "type": ["object", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "event": {
+      "type": "object",
+      "required": ["schema", "event_id", "session_id", "sequence", "occurred_at", "kind", "actor"],
+      "properties": {
+        "schema": { "const": "kg-agent-execution-event/1" },
+        "event_id": { "type": "string", "minLength": 1 },
+        "session_id": { "type": "string", "minLength": 1 },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "occurred_at": { "type": "string", "format": "date-time" },
+        "kind": {
+          "type": "string",
+          "enum": ["session_started", "observation_sample", "state_transition", "decision", "action", "action_result", "outcome", "error", "session_ended"]
+        },
+        "actor": { "type": "string" },
+        "task_phase": { "type": ["string", "null"] },
+        "correlation": { "type": "object" },
+        "data": { "type": "object" },
+        "evidence": { "type": "object" },
+        "outcome": { "type": "object" }
+      },
+      "additionalProperties": true
+    }
+  }
+}

@@ -8,6 +8,7 @@ Webブラウザで動作する、スムーズな自機移動と弾発射がで�
 - 複数の敵基地（破壊可能）
 - シンプルな敵出現
 - Jev向けの構造化観測・時間制限付き操作コネクター
+- ゲーム外のエージェント作業にも流用できるJSONL実行ログ
 
 ## 操作方法
 - 矢印キー / WASD：移動
@@ -55,9 +56,44 @@ window.JevBosconianConnector.act({
   move_ms: 150
 });
 window.JevBosconianConnector.stop();
+window.JevBosconianConnector.getLog();
+window.JevBosconianConnector.getLogJSONL();
 ```
 
 同一ウィンドウの `postMessage` では `type: "jev-bosconian-action"` を受け付けます。
+
+## 汎用Agent実行ログ
+
+`agent-execution-log.js` はゲーム固有ではないロガーです。調査、ブラウザ操作、API検証、決済前後の確認などでも同じ形式を利用できます。
+
+保存対象：
+
+- セッションの目的と実行元
+- 状態変化
+- 判断と操作
+- 操作結果
+- 成功・失敗・未確認事項
+- 1Hzへ間引いた観測サンプル
+
+10Hzの観測全文は保存せず、再利用価値の高い出来事を中心に記録します。ログはブラウザのローカル領域だけへ保存され、自動送信されません。最大12セッション、各1500イベントまで保持します。
+
+```js
+const session = window.KGAgentExecutionLog.createSession({
+  task: { domain: 'research', objective: '公開情報を再確認する' },
+  source: { application: 'kg-voice' }
+});
+
+window.KGAgentExecutionLog.record(session.session_id, {
+  kind: 'action',
+  actor: 'agent',
+  data: { operation: 'open_source' },
+  evidence: { url: 'https://example.com/' }
+});
+
+const jsonl = window.KGAgentExecutionLog.toJSONL(session.session_id);
+```
+
+各行は `agent-execution-log.schema.json` のセッションまたはイベント形式です。Jevパネルから現在セッションをコピーまたはJSONLファイルとして保存できます。
 
 ---
 
