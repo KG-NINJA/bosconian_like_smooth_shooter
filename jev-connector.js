@@ -4,7 +4,8 @@
   const enabled = new URLSearchParams(window.location.search).get('jev') === '1';
   if (!enabled) return;
 
-  const VERSION = '1.1.0';
+  const VERSION = '1.1.1';
+  const allowBackground = new URLSearchParams(window.location.search).get('jev_background') === '1';
   const OBSERVATION_INTERVAL_MS = 100;
   const MIN_DURATION_MS = 50;
   const MAX_DURATION_MS = 3000;
@@ -77,7 +78,7 @@
       actor: 'connector',
       task_phase: 'initialization',
       data: { stage, bases_remaining: bases.filter(base => base.alive).length },
-      evidence: { query_enabled: true, persistence: 'browser_local_only' }
+      evidence: { query_enabled: true, background_control: allowBackground, persistence: 'browser_local_only' }
     });
   }
 
@@ -536,9 +537,11 @@
       window.postMessage({ type: 'jev-bosconian-action-result', ok: false, error: error.message }, window.location.origin);
     }
   });
-  window.addEventListener('blur', () => stop('window_blur'));
+  window.addEventListener('blur', () => {
+    if (!allowBackground) stop('window_blur');
+  });
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) stop('document_hidden');
+    if (document.hidden && !allowBackground) stop('document_hidden');
   });
   window.addEventListener('pagehide', () => {
     if (logSessionId && window.KGAgentExecutionLog) {
